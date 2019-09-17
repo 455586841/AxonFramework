@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,20 +19,7 @@ package org.axonframework.config;
 import org.axonframework.common.AxonConfigurationException;
 import org.axonframework.common.transaction.NoTransactionManager;
 import org.axonframework.common.transaction.TransactionManager;
-import org.axonframework.eventhandling.DirectEventProcessingStrategy;
-import org.axonframework.eventhandling.ErrorHandler;
-import org.axonframework.eventhandling.EventHandlerInvoker;
-import org.axonframework.eventhandling.EventMessage;
-import org.axonframework.eventhandling.EventProcessor;
-import org.axonframework.eventhandling.ListenerInvocationErrorHandler;
-import org.axonframework.eventhandling.LoggingErrorHandler;
-import org.axonframework.eventhandling.MultiEventHandlerInvoker;
-import org.axonframework.eventhandling.PropagatingErrorHandler;
-import org.axonframework.eventhandling.SimpleEventHandlerInvoker;
-import org.axonframework.eventhandling.SubscribingEventProcessor;
-import org.axonframework.eventhandling.TrackedEventMessage;
-import org.axonframework.eventhandling.TrackingEventProcessor;
-import org.axonframework.eventhandling.TrackingEventProcessorConfiguration;
+import org.axonframework.eventhandling.*;
 import org.axonframework.eventhandling.async.SequencingPolicy;
 import org.axonframework.eventhandling.async.SequentialPerAggregatePolicy;
 import org.axonframework.eventhandling.tokenstore.TokenStore;
@@ -48,13 +35,8 @@ import org.axonframework.modelling.saga.repository.SagaStore;
 import org.axonframework.modelling.saga.repository.inmemory.InMemorySagaStore;
 import org.axonframework.monitoring.MessageMonitor;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -93,26 +75,17 @@ public class EventProcessingModule
     private final Map<String, Component<TokenStore>> tokenStore = new HashMap<>();
     private final Map<String, Component<RollbackConfiguration>> rollbackConfigurations = new HashMap<>();
     private final Map<String, Component<TransactionManager>> transactionManagers = new HashMap<>();
-    private final Map<String, Component<TrackingEventProcessorConfiguration>> trackingEventProcessorConfigurations = new HashMap<>();
+
     // Set up the default selector that determines the processing group by inspecting the @ProcessingGroup annotation;
     // if no annotation is present, the package name is used
     private Function<Class<?>, String> typeFallback = c -> c.getSimpleName() + "Processor";
-    private final TypeProcessingGroupSelector defaultTypeSelector = new TypeProcessingGroupSelector(
-            Integer.MIN_VALUE,
-            type -> {
-                Optional<Map<String, Object>> annAttr = findAnnotationAttributes(type, ProcessingGroup.class);
-                return Optional.of(annAttr.map(attr -> (String) attr.get("processingGroup"))
-                                          .orElseGet(() -> typeFallback.apply(type)));
-            });
-    private Function<Object, String> instanceFallback = o -> o.getClass().getPackage().getName();
-    private final InstanceProcessingGroupSelector defaultInstanceSelector = new InstanceProcessingGroupSelector(
-            Integer.MIN_VALUE,
-            o -> {
-                Class<?> handlerType = o.getClass();
-                Optional<Map<String, Object>> annAttr = findAnnotationAttributes(handlerType, ProcessingGroup.class);
-                return Optional.of(annAttr.map(attr -> (String) attr.get("processingGroup"))
-                                          .orElseGet(() -> instanceFallback.apply(o)));
-            });
+    private final TypeProcessingGroupSelector defaultTypeSelector = TypeProcessingGroupSelector
+            .defaultSelector(type -> annotatedProcessingGroupOfType(type).orElseGet(() -> typeFallback.apply(type)));
+
+    private Function<Object, String> instanceFallback = EventProcessingModule::packageOfObject;
+    private final InstanceProcessingGroupSelector defaultInstanceSelector = InstanceProcessingGroupSelector
+            .defaultSelector(o -> annotatedProcessingGroupOfType(o.getClass()).orElseGet(() -> instanceFallback.apply(o)));
+
     private Configuration configuration;
     private final Component<ListenerInvocationErrorHandler> defaultListenerInvocationErrorHandler = new Component<>(
             () -> configuration,
@@ -148,6 +121,19 @@ public class EventProcessingModule
             "transactionManager",
             c -> c.getComponent(TransactionManager.class, NoTransactionManager::instance)
     );
+    @SuppressWarnings("unchecked")
+    private Component<StreamableMessageSource<TrackedEventMessage<?>>> defaultStreamableSource =
+            new Component<>(
+                    () -> configuration,
+                    "defaultStreamableMessageSource",
+                    c -> (StreamableMessageSource<TrackedEventMessage<?>>) c.eventBus()
+            );
+    private Component<SubscribableMessageSource<? extends EventMessage<?>>> defaultSubscribableSource =
+            new Component<>(
+                    () -> configuration,
+                    "defaultSubscribableMessageSource",
+                    Configuration::eventBus
+            );
     private final Component<TrackingEventProcessorConfiguration> defaultTrackingEventProcessorConfiguration =
             new Component<>(
                     () -> configuration,
@@ -184,7 +170,11 @@ public class EventProcessingModule
 
     @Override
     public void shutdown() {
-        eventProcessors.forEach((name, component) -> component.get().shutDown());
+        eventProcessors.values().stream()
+                       .map(Component::get)
+                       .map(EventProcessor::shutdownAsync)
+                       .reduce((cf1, cf2) -> CompletableFuture.allOf(cf1, cf2))
+                       .ifPresent(CompletableFuture::join);
     }
     //</editor-fold>
 
@@ -426,6 +416,18 @@ public class EventProcessingModule
     }
 
     @Override
+    public EventProcessingConfigurer configureDefaultStreamableMessageSource(Function<Configuration, StreamableMessageSource<TrackedEventMessage<?>>> defaultSource) {
+        this.defaultStreamableSource.update(defaultSource);
+        return this;
+    }
+
+    @Override
+    public EventProcessingConfigurer configureDefaultSubscribableMessageSource(Function<Configuration, SubscribableMessageSource<EventMessage<?>>> defaultSource) {
+        this.defaultSubscribableSource.update(defaultSource);
+        return this;
+    }
+
+    @Override
     public EventProcessingConfigurer registerTrackingEventProcessor(String name,
                                                                     Function<Configuration, StreamableMessageSource<TrackedEventMessage<?>>> source) {
         return registerTrackingEventProcessor(name, source, c -> defaultTrackingEventProcessorConfiguration.get());
@@ -477,14 +479,22 @@ public class EventProcessingModule
     @Override
     public EventProcessingConfigurer usingSubscribingEventProcessors() {
         this.defaultEventProcessorBuilder = (name, conf, eventHandlerInvoker) ->
-                subscribingEventProcessor(name, conf, eventHandlerInvoker, Configuration::eventBus);
+                subscribingEventProcessor(name, eventHandlerInvoker, defaultSubscribableSource.get());
+        return this;
+    }
+
+    @Override
+    public EventProcessingConfigurer usingTrackingEventProcessors() {
+        this.defaultEventProcessorBuilder = (name, conf, eventHandlerInvoker) ->
+                trackingEventProcessor(name, eventHandlerInvoker, defaultTrackingEventProcessorConfiguration.get(),
+                                       defaultStreamableSource.get());
         return this;
     }
 
     @Override
     public EventProcessingConfigurer registerSubscribingEventProcessor(String name,
                                                                        Function<Configuration, SubscribableMessageSource<? extends EventMessage<?>>> messageSource) {
-        registerEventProcessor(name, (n, c, ehi) -> subscribingEventProcessor(n, c, ehi, messageSource));
+        registerEventProcessor(name, (n, c, ehi) -> subscribingEventProcessor(n, ehi, messageSource.apply(c)));
         return this;
     }
 
@@ -609,7 +619,6 @@ public class EventProcessingModule
         return this;
     }
 
-    @SuppressWarnings("unchecked")
     private EventProcessor defaultEventProcessor(String name,
                                                  Configuration conf,
                                                  EventHandlerInvoker eventHandlerInvoker) {
@@ -618,24 +627,23 @@ public class EventProcessingModule
                     name,
                     eventHandlerInvoker,
                     defaultTrackingEventProcessorConfiguration.get(),
-                    (StreamableMessageSource) conf.eventBus()
+                    defaultStreamableSource.get()
             );
         } else {
-            return subscribingEventProcessor(name, conf, eventHandlerInvoker, Configuration::eventBus);
+            return subscribingEventProcessor(name, eventHandlerInvoker, defaultSubscribableSource.get());
         }
     }
 
     private SubscribingEventProcessor subscribingEventProcessor(String name,
-                                                                Configuration conf,
                                                                 EventHandlerInvoker eventHandlerInvoker,
-                                                                Function<Configuration, SubscribableMessageSource<? extends EventMessage<?>>> messageSource) {
+                                                                SubscribableMessageSource<? extends EventMessage<?>> messageSource) {
         return SubscribingEventProcessor.builder()
                                         .name(name)
                                         .eventHandlerInvoker(eventHandlerInvoker)
                                         .rollbackConfiguration(rollbackConfiguration(name))
                                         .errorHandler(errorHandler(name))
                                         .messageMonitor(messageMonitor(SubscribingEventProcessor.class, name))
-                                        .messageSource(messageSource.apply(conf))
+                                        .messageSource(messageSource)
                                         .processingStrategy(DirectEventProcessingStrategy.INSTANCE)
                                         .transactionManager(transactionManager(name))
                                         .build();
@@ -658,11 +666,34 @@ public class EventProcessingModule
                                      .build();
     }
 
+    /**
+     * Gets the package name from the class of the given object.
+     * <p>
+     * Since class.getPackage() can be null e.g. for generated classes, the
+     * package name is determined the old fashioned way based on the full
+     * qualified class name.
+     * 
+     * @param object
+     *            {@link Object}
+     * @return {@link String}
+     */
+    protected static String packageOfObject(Object object) {
+        return object.getClass().getName().replace("." + object.getClass().getSimpleName(), "");
+    }
+
+    private static Optional<String> annotatedProcessingGroupOfType(Class<?> type) {
+        Optional<Map<String, Object>> annAttr = findAnnotationAttributes(type, ProcessingGroup.class);
+        return annAttr.map(attr -> (String) attr.get("processingGroup"));
+    }
+
     //<editor-fold desc="configuration state">
     private static class InstanceProcessingGroupSelector extends ProcessingGroupSelector<Object> {
 
-        private InstanceProcessingGroupSelector(int priority,
-                                                Function<Object, Optional<String>> selectorFunction) {
+        private static InstanceProcessingGroupSelector defaultSelector(Function<Object, String> selectorFunction) {
+            return new InstanceProcessingGroupSelector(Integer.MIN_VALUE, selectorFunction.andThen(Optional::of));
+        }
+
+        private InstanceProcessingGroupSelector(int priority, Function<Object, Optional<String>> selectorFunction) {
             super(priority, selectorFunction);
         }
 
@@ -673,8 +704,11 @@ public class EventProcessingModule
 
     private static class TypeProcessingGroupSelector extends ProcessingGroupSelector<Class<?>> {
 
-        private TypeProcessingGroupSelector(int priority,
-                                            Function<Class<?>, Optional<String>> selectorFunction) {
+        private static TypeProcessingGroupSelector defaultSelector(Function<Class<?>, String> selectorFunction) {
+            return new TypeProcessingGroupSelector(Integer.MIN_VALUE, selectorFunction.andThen(Optional::of));
+        }
+
+        private TypeProcessingGroupSelector(int priority, Function<Class<?>, Optional<String>> selectorFunction) {
             super(priority, selectorFunction);
         }
 

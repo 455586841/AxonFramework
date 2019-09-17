@@ -23,11 +23,7 @@ import io.axoniq.axonserver.grpc.query.QueryRequest;
 import io.axoniq.axonserver.grpc.query.QueryResponse;
 import org.axonframework.axonserver.connector.AxonServerConfiguration;
 import org.axonframework.axonserver.connector.ErrorCode;
-import org.axonframework.axonserver.connector.util.ExceptionSerializer;
-import org.axonframework.axonserver.connector.util.GrpcMetaDataConverter;
-import org.axonframework.axonserver.connector.util.GrpcMetadataSerializer;
-import org.axonframework.axonserver.connector.util.GrpcObjectSerializer;
-import org.axonframework.axonserver.connector.util.GrpcPayloadSerializer;
+import org.axonframework.axonserver.connector.util.*;
 import org.axonframework.queryhandling.QueryMessage;
 import org.axonframework.queryhandling.QueryResponseMessage;
 import org.axonframework.serialization.Serializer;
@@ -45,6 +41,7 @@ public class QuerySerializer {
     private final Serializer serializer;
     private final AxonServerConfiguration configuration;
 
+    private final GrpcObjectSerializer<Object> exceptionDetailsSerializer;
     private final GrpcPayloadSerializer payloadSerializer;
     private final GrpcMetadataSerializer metadataSerializer;
     private final GrpcObjectSerializer<Object> responseTypeSerializer;
@@ -71,6 +68,7 @@ public class QuerySerializer {
         this.configuration = configuration;
 
         this.payloadSerializer = new GrpcPayloadSerializer(messageSerializer);
+        this.exceptionDetailsSerializer = new GrpcObjectSerializer<>(messageSerializer);
         this.metadataSerializer = new GrpcMetadataSerializer(new GrpcMetaDataConverter(this.messageSerializer));
         this.responseTypeSerializer = new GrpcObjectSerializer<>(serializer);
     }
@@ -135,6 +133,8 @@ public class QuerySerializer {
             responseBuilder.setErrorMessage(
                     ExceptionSerializer.serialize(configuration.getClientId(), exceptionResult)
             );
+            queryResponse.exceptionDetails()
+                         .ifPresent(details -> responseBuilder.setPayload(exceptionDetailsSerializer.apply(details)));
         } else {
             responseBuilder.setPayload(payloadSerializer.apply(queryResponse));
         }

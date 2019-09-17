@@ -26,8 +26,8 @@ import org.axonframework.axonserver.connector.ErrorCode;
 import org.axonframework.axonserver.connector.PlatformService;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Author: marc
@@ -35,7 +35,7 @@ import java.util.Map;
 public class DummyMessagePlatformServer {
     private final int port;
     private Server server;
-    private Map<String, StreamObserver> subscriptions = new HashMap<>();
+    private Map<String, StreamObserver> subscriptions = new ConcurrentHashMap<>();
 
     public DummyMessagePlatformServer(int port) {
         this.port = port;
@@ -117,6 +117,10 @@ public class DummyMessagePlatformServer {
                                                        .setErrorCode(ErrorCode.COMMAND_EXECUTION_ERROR.errorCode())
                                                        .setMessageIdentifier(request.getMessageIdentifier())
                                                        .setErrorMessage(ErrorMessage.newBuilder().setMessage(data))
+                                                       .setPayload(SerializedObject.newBuilder()
+                                                                                   .setData(request.getPayload().getData())
+                                                                                   .setType(String.class.getName())
+                                                                                   .build())
                                                        .build());
             } else {
                 responseObserver.onNext(CommandResponse.newBuilder()
@@ -132,10 +136,10 @@ public class DummyMessagePlatformServer {
 
     }
 
-    public void onError(String command){
+    public void simulateError(String command) {
         StreamObserver subscription = this.subscriptions(command);
         subscription.onError(new RuntimeException());
-        subscriptions.remove(subscription);
+        subscriptions.remove(command);
     }
 
 }

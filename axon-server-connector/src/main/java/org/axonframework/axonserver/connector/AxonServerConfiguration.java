@@ -37,6 +37,7 @@ public class AxonServerConfiguration {
 
     private static final int DEFAULT_GRPC_PORT = 8124;
     private static final String DEFAULT_SERVERS = "localhost";
+    private static final String DEFAULT_CONTEXT = "default";
 
     /**
      * Comma separated list of AxonDB servers. Each element is hostname or hostname:grpcPort. When no grpcPort is
@@ -62,9 +63,9 @@ public class AxonServerConfiguration {
     private String token;
 
     /**
-     * Bounded context that this application operates in
+     * Bounded context that this application operates in. Defaults to {@code "default"}.
      */
-    private String context;
+    private String context = DEFAULT_CONTEXT;
 
     /**
      * Certificate file for SSL
@@ -129,9 +130,9 @@ public class AxonServerConfiguration {
     private long keepAliveTimeout = 5000;
 
     /**
-     * Interval (in ms) for keep alive requests, 0 is keep-alive disabled
+     * Interval (in ms) for keep alive requests, 0 is keep-alive disabled. Defaults to {@code 1000}.
      */
-    private long keepAliveTime = 0;
+    private long keepAliveTime = 1_000;
 
     /**
      * An {@code int} indicating the maximum number of Aggregate snapshots which will be retrieved. Defaults to
@@ -155,17 +156,20 @@ public class AxonServerConfiguration {
     private int commitTimeout = 10000;
 
     /**
+     * Flag that allows blacklisting of Event types to be disabled. Disabling this may have serious performance impact,
+     * as it requires all messages from AxonServer to be sent to clients, even if a Client is unable to process the
+     * message.
+     * <p>
+     * Default is to have blacklisting enabled
+     */
+    private boolean disableEventBlacklisting = false;
+
+    /**
      * The number of messages that may be in-transit on the network/grpc level when streaming data from the server.
      * Setting this to 0 (or a negative value) will disable buffering, and requires each message sent by the server to
      * be acknowledged before the next message may be sent. Defaults to 500.
      */
     private int maxGrpcBufferedMessages = 500;
-
-    /**
-     * Instantiate a default {@link AxonServerConfiguration}.
-     */
-    public AxonServerConfiguration() {
-    }
 
     /**
      * Instantiate a {@link Builder} to create an {@link AxonServerConfiguration}.
@@ -179,6 +183,12 @@ public class AxonServerConfiguration {
         }
 
         return builder;
+    }
+
+    /**
+     * Instantiate a default {@link AxonServerConfiguration}.
+     */
+    public AxonServerConfiguration() {
     }
 
     public String getServers() {
@@ -365,6 +375,14 @@ public class AxonServerConfiguration {
 
     public void setSnapshotPrefetch(int snapshotPrefetch) {
         this.snapshotPrefetch = snapshotPrefetch;
+    }
+
+    public boolean isDisableEventBlacklisting() {
+        return disableEventBlacklisting;
+    }
+
+    public void setDisableEventBlacklisting(boolean disableEventBlacklisting) {
+        this.disableEventBlacklisting = disableEventBlacklisting;
     }
 
     public int getCommitTimeout() {
