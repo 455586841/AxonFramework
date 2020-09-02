@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2010-2019. Axon Framework
+ * Copyright (c) 2010-2020. Axon Framework
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -68,15 +68,14 @@ public class GapAwareTrackingToken implements TrackingToken, Serializable {
     /**
      * This constructor is mean't to be used for deserialization. <br>
      * Please use {@link #newInstance(long, Collection)} to create new instances.
-     * 
+     *
      * @param index the highest global sequence number of events up until (and including) this tracking token
      * @param gaps  global sequence numbers of events that have not been seen yet even though these sequence numbers are
      *              smaller than the current index. These missing sequence numbers may be filled in later when those
      *              events get committed to the store or may never be filled in if those events never get committed.
-     * @param gaps
      */
     @JsonCreator
-    @ConstructorProperties({ "index", "gaps" })
+    @ConstructorProperties({"index", "gaps"})
     public GapAwareTrackingToken(@JsonProperty("index") long index, @JsonProperty("gaps") Collection<Long> gaps) {
         this(index, createSortedSetOf(gaps, index), 0);
     }
@@ -87,8 +86,17 @@ public class GapAwareTrackingToken implements TrackingToken, Serializable {
         this.gapTruncationIndex = gapTruncationIndex;
     }
 
-    private static SortedSet<Long> createSortedSetOf(Collection<Long> gaps, long index) {
-        if (gaps.isEmpty()) {
+    /**
+     * Construct a {@link SortedSet} of the given {@code gaps} to be set in this Tracking Token. The given {@code index}
+     * will be consolidated to ensure the last gap in the set is smaller. If this is not the case, an
+     * {@link IllegalArgumentException} is thrown
+     *
+     * @param gaps  the {@link Collection} of gaps to created a {@link SortedSet} out of
+     * @param index a {@code long} which is required to be bigger than the last known gap in the set
+     * @return a {@link SortedSet} constructed out of the given {@code gaps}
+     */
+    protected static SortedSet<Long> createSortedSetOf(Collection<Long> gaps, long index) {
+        if (gaps == null || gaps.isEmpty()) {
             return Collections.emptySortedSet();
         }
         SortedSet<Long> gapSet = new ConcurrentSkipListSet<>(gaps);
@@ -185,7 +193,8 @@ public class GapAwareTrackingToken implements TrackingToken, Serializable {
         GapAwareTrackingToken other = (GapAwareTrackingToken) otherToken;
         SortedSet<Long> newGaps = CollectionUtils.intersect(this.gaps, other.gaps, ConcurrentSkipListSet::new);
         long min = Math.min(this.index, other.index) + 1;
-        SortedSet<Long> mergedGaps = CollectionUtils.merge(this.gaps.tailSet(min), other.gaps.tailSet(min), ConcurrentSkipListSet::new);
+        SortedSet<Long> mergedGaps =
+                CollectionUtils.merge(this.gaps.tailSet(min), other.gaps.tailSet(min), ConcurrentSkipListSet::new);
         newGaps.addAll(mergedGaps);
 
         return new GapAwareTrackingToken(Math.max(this.index, other.index), newGaps,

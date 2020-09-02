@@ -76,9 +76,11 @@ public class MultiSourceTrackingToken implements TrackingToken, Serializable {
 
         Map<String, TrackingToken> tokenMap = new HashMap<>();
 
-        otherMultiToken.trackingTokens.forEach((tokenSourceName, otherToken) ->
-                                                       tokenMap.put(tokenSourceName,
-                                                                    trackingTokens.get(tokenSourceName).lowerBound(otherToken))
+        otherMultiToken.trackingTokens
+                .forEach((tokenSourceName, otherToken) ->
+                                 tokenMap.put(tokenSourceName, trackingTokens.get(tokenSourceName) == null ?
+                                                    null :
+                                                    trackingTokens.get(tokenSourceName).lowerBound(otherToken))
         );
 
         return new MultiSourceTrackingToken(tokenMap);
@@ -104,8 +106,11 @@ public class MultiSourceTrackingToken implements TrackingToken, Serializable {
 
         Map<String, TrackingToken> tokenMap = new HashMap<>();
 
-        otherMultiToken.trackingTokens.forEach((tokenSourceName, otherToken) ->
-                                                       tokenMap.put(tokenSourceName, trackingTokens.get(tokenSourceName).upperBound(otherToken))
+        otherMultiToken.trackingTokens
+                .forEach((tokenSourceName, otherToken) ->
+                                 tokenMap.put(tokenSourceName, trackingTokens.get(tokenSourceName) == null ?
+                                                    otherToken :
+                                                    trackingTokens.get(tokenSourceName).upperBound(otherToken))
         );
 
         return new MultiSourceTrackingToken(tokenMap);
@@ -131,8 +136,13 @@ public class MultiSourceTrackingToken implements TrackingToken, Serializable {
 
         //as soon as one delegated token doesn't cover return false
         for (Map.Entry<String, TrackingToken> trackingTokenEntry : trackingTokens.entrySet()) {
-            if (!trackingTokenEntry.getValue().covers(otherMultiToken.trackingTokens
-                                                              .get(trackingTokenEntry.getKey()))) {
+            TrackingToken constituent = trackingTokenEntry.getValue();
+            TrackingToken otherConstituent = otherMultiToken.trackingTokens.get(trackingTokenEntry.getKey());
+            if (constituent == null) {
+                if (otherConstituent != null) {
+                    return false;
+                }
+            } else if (otherConstituent != null && !constituent.covers(otherConstituent)) {
                 return false;
             }
         }
@@ -181,11 +191,12 @@ public class MultiSourceTrackingToken implements TrackingToken, Serializable {
     public OptionalLong position() {
 
         //If all delegated tokens are empty then return empty
-        if (trackingTokens.entrySet().stream().noneMatch(token -> token.getValue().position().isPresent())) {
+        if (trackingTokens.entrySet().stream().noneMatch(token -> token.getValue() != null && token.getValue().position().isPresent())) {
             return OptionalLong.empty();
         }
 
         long sumOfTokens = trackingTokens.values().stream()
+                                         .filter(Objects::nonNull)
                                          .mapToLong(trackingToken -> trackingToken.position().orElse(0L))
                                          .sum();
 
@@ -206,17 +217,10 @@ public class MultiSourceTrackingToken implements TrackingToken, Serializable {
             return false;
         }
 
-        for (Map.Entry<String, TrackingToken> trackingTokenEntry : trackingTokens.entrySet()) {
-            try {
-                if (!trackingTokenEntry.getValue().equals(that.trackingTokens.get(trackingTokenEntry.getKey()))) {
-                    return false;
-                }
-            } catch (NullPointerException ex) {
-                logger.warn("A constituent token has not been initialized");
-                return false;
-            }
-        }
-        return true;
+        return trackingTokens.entrySet()
+                             .stream()
+                             .allMatch(trackingTokenEntry -> Objects.equals(trackingTokenEntry.getValue(),
+                                                                            that.trackingTokens.get(trackingTokenEntry.getKey())));
     }
 
     @Override

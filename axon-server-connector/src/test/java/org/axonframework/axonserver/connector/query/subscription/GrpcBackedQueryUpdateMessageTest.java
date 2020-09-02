@@ -23,11 +23,13 @@ import org.axonframework.queryhandling.GenericSubscriptionQueryUpdateMessage;
 import org.axonframework.queryhandling.SubscriptionQueryUpdateMessage;
 import org.axonframework.serialization.Serializer;
 import org.axonframework.serialization.xml.XStreamSerializer;
-import org.junit.*;
+import org.junit.jupiter.api.Test;
 
 import java.util.Objects;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test all the functions provided on the {@link GrpcBackedQueryUpdateMessage}. The {@link QueryUpdate} to be passed to
@@ -35,7 +37,7 @@ import static org.junit.Assert.*;
  *
  * @author Steven van Beelen
  */
-public class GrpcBackedQueryUpdateMessageTest {
+class GrpcBackedQueryUpdateMessageTest {
 
     private static final TestQueryUpdate TEST_QUERY_UPDATE = new TestQueryUpdate("aggregateId", 42);
     private static final String SUBSCRIPTION_ID = "subscription-id";
@@ -45,13 +47,11 @@ public class GrpcBackedQueryUpdateMessageTest {
             new SubscriptionMessageSerializer(serializer, serializer, new AxonServerConfiguration());
 
     @Test
-    public void testGetIdentifierReturnsTheSameIdentifierAsSpecifiedInTheQueryUpdate() {
+    void testGetIdentifierReturnsTheSameIdentifierAsSpecifiedInTheQueryUpdate() {
         SubscriptionQueryUpdateMessage<Object> testSubscriptionQueryUpdateMessage =
                 GenericSubscriptionQueryUpdateMessage.asUpdateMessage(TEST_QUERY_UPDATE);
         QueryUpdate testQueryUpdate =
-                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage, SUBSCRIPTION_ID)
-                                             .getSubscriptionQueryResponse()
-                                             .getUpdate();
+                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage);
         GrpcBackedQueryUpdateMessage<TestQueryUpdate> testSubject =
                 new GrpcBackedQueryUpdateMessage<>(testQueryUpdate, serializer);
 
@@ -59,14 +59,12 @@ public class GrpcBackedQueryUpdateMessageTest {
     }
 
     @Test
-    public void testGetMetaDataReturnsTheSameMapAsWasInsertedInTheQueryUpdate() {
+    void testGetMetaDataReturnsTheSameMapAsWasInsertedInTheQueryUpdate() {
         MetaData expectedMetaData = MetaData.with("some-key", "some-value");
         SubscriptionQueryUpdateMessage<Object> testSubscriptionQueryUpdateMessage =
                 GenericSubscriptionQueryUpdateMessage.asUpdateMessage(TEST_QUERY_UPDATE).withMetaData(expectedMetaData);
         QueryUpdate testQueryUpdate =
-                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage, SUBSCRIPTION_ID)
-                                             .getSubscriptionQueryResponse()
-                                             .getUpdate();
+                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage);
         GrpcBackedQueryUpdateMessage<TestQueryUpdate> testSubject =
                 new GrpcBackedQueryUpdateMessage<>(testQueryUpdate, serializer);
 
@@ -74,14 +72,12 @@ public class GrpcBackedQueryUpdateMessageTest {
     }
 
     @Test
-    public void testGetPayloadReturnsAnIdenticalObjectAsInsertedThroughTheQueryUpdate() {
+    void testGetPayloadReturnsAnIdenticalObjectAsInsertedThroughTheQueryUpdate() {
         TestQueryUpdate expectedQueryUpdate = TEST_QUERY_UPDATE;
         SubscriptionQueryUpdateMessage<Object> testSubscriptionQueryUpdateMessage =
                 GenericSubscriptionQueryUpdateMessage.asUpdateMessage(expectedQueryUpdate);
         QueryUpdate testQueryUpdate =
-                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage, SUBSCRIPTION_ID)
-                                             .getSubscriptionQueryResponse()
-                                             .getUpdate();
+                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage);
         GrpcBackedQueryUpdateMessage<TestQueryUpdate> testSubject =
                 new GrpcBackedQueryUpdateMessage<>(testQueryUpdate, serializer);
 
@@ -89,13 +85,11 @@ public class GrpcBackedQueryUpdateMessageTest {
     }
 
     @Test
-    public void testGetPayloadTypeReturnsTheTypeOfTheInsertedQueryUpdate() {
+    void testGetPayloadTypeReturnsTheTypeOfTheInsertedQueryUpdate() {
         SubscriptionQueryUpdateMessage<Object> testSubscriptionQueryUpdateMessage =
                 GenericSubscriptionQueryUpdateMessage.asUpdateMessage(TEST_QUERY_UPDATE);
         QueryUpdate testQueryUpdate =
-                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage, SUBSCRIPTION_ID)
-                                             .getSubscriptionQueryResponse()
-                                             .getUpdate();
+                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage);
         GrpcBackedQueryUpdateMessage<TestQueryUpdate> testSubject =
                 new GrpcBackedQueryUpdateMessage<>(testQueryUpdate, serializer);
 
@@ -103,14 +97,12 @@ public class GrpcBackedQueryUpdateMessageTest {
     }
 
     @Test
-    public void testWithMetaDataCompletelyReplacesTheInitialMetaDataMap() {
+    void testWithMetaDataCompletelyReplacesTheInitialMetaDataMap() {
         MetaData testMetaData = MetaData.with("some-key", "some-value");
         SubscriptionQueryUpdateMessage<Object> testSubscriptionQueryUpdateMessage =
                 GenericSubscriptionQueryUpdateMessage.asUpdateMessage(TEST_QUERY_UPDATE).withMetaData(testMetaData);
         QueryUpdate testQueryUpdate =
-                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage, SUBSCRIPTION_ID)
-                                             .getSubscriptionQueryResponse()
-                                             .getUpdate();
+                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage);
         GrpcBackedQueryUpdateMessage<TestQueryUpdate> testSubject =
                 new GrpcBackedQueryUpdateMessage<>(testQueryUpdate, serializer);
 
@@ -123,14 +115,12 @@ public class GrpcBackedQueryUpdateMessageTest {
     }
 
     @Test
-    public void testAndMetaDataAppendsToTheExistingMetaData() {
+    void testAndMetaDataAppendsToTheExistingMetaData() {
         MetaData testMetaData = MetaData.with("some-key", "some-value");
         SubscriptionQueryUpdateMessage<Object> testSubscriptionQueryUpdateMessage =
                 GenericSubscriptionQueryUpdateMessage.asUpdateMessage(TEST_QUERY_UPDATE).withMetaData(testMetaData);
         QueryUpdate testQueryUpdate =
-                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage, SUBSCRIPTION_ID)
-                                             .getSubscriptionQueryResponse()
-                                             .getUpdate();
+                subscriptionMessageSerializer.serialize(testSubscriptionQueryUpdateMessage);
         GrpcBackedQueryUpdateMessage<TestQueryUpdate> testSubject =
                 new GrpcBackedQueryUpdateMessage<>(testQueryUpdate, serializer);
 

@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2010-2019. Axon Framework
+ * Copyright (c) 2010-2020. Axon Framework
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,8 +16,17 @@
 
 package org.axonframework.axonserver.connector.event.axon;
 
+import io.axoniq.axonserver.connector.event.EventStream;
 import io.axoniq.axonserver.grpc.event.EventWithToken;
-import org.axonframework.eventhandling.*;
+import org.axonframework.axonserver.connector.AxonServerException;
+import org.axonframework.axonserver.connector.ErrorCode;
+import org.axonframework.eventhandling.EventUtils;
+import org.axonframework.eventhandling.GlobalSequenceTrackingToken;
+import org.axonframework.eventhandling.TrackedDomainEventData;
+import org.axonframework.eventhandling.TrackedEventData;
+import org.axonframework.eventhandling.TrackedEventMessage;
+import org.axonframework.eventhandling.TrackingEventStream;
+import org.axonframework.eventhandling.TrackingToken;
 import org.axonframework.serialization.SerializedType;
 import org.axonframework.serialization.Serializer;
 import org.axonframework.serialization.UnknownSerializedType;
@@ -26,12 +35,13 @@ import org.axonframework.serialization.upcasting.event.NoOpEventUpcaster;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandles;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.Spliterator;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.StreamSupport;
@@ -39,148 +49,138 @@ import java.util.stream.StreamSupport;
 import static org.axonframework.common.ObjectUtils.getOrDefault;
 
 /**
- * Client-side buffer of messages received from the server. Once consumed from this buffer, the client is notified
- * of a permit being consumed, potentially triggering a permit refresh, if flow control is enabled.
+ * Client-side buffer of messages received from the server. Once consumed from this buffer, the client is notified of a
+ * permit being consumed, potentially triggering a permit refresh, if flow control is enabled.
  * <p>
  * This class is intended for internal use. Be cautious.
  *
  * @author Marc Gathier
  * @author Allard Buijze
+ * @since 4.0
  */
 public class EventBuffer implements TrackingEventStream {
-    final Logger logger = LoggerFactory.getLogger(EventBuffer.class);
 
-    private final BlockingQueue<TrackedEventData<byte[]>> events;
+    private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
 
+    private static final int MAX_AWAIT_AVAILABLE_DATA = 500;
+
+    private final EventStream delegate;
     private final Iterator<TrackedEventMessage<?>> eventStream;
     private final Serializer serializer;
+    private final boolean disableEventBlacklisting;
 
-    private TrackedEventData<byte[]> peekData;
     private TrackedEventMessage<?> peekEvent;
-    private Consumer<EventBuffer> closeCallback;
-    private volatile RuntimeException exception;
-    private volatile boolean closed;
-    private Consumer<Integer> consumeListener = i -> {
-    };
-    private volatile Consumer<SerializedType> blacklistListener;
+
+    private final ReentrantLock lock = new ReentrantLock();
+    private final Condition dataAvailable = lock.newCondition();
 
     /**
      * Initializes an Event Buffer, passing messages through given {@code upcasterChain} and deserializing events using
      * given {@code serializer}.
      *
-     * @param upcasterChain The upcasterChain to translate serialized representations before deserializing
-     * @param serializer    The serializer capable of deserializing incoming messages
+     * @param delegate                 the {@link EventStream} to delegate operations to
+     * @param upcasterChain            the upcasterChain to translate serialized representations before deserializing
+     * @param serializer               the serializer capable of deserializing incoming messages
+     * @param disableEventBlacklisting specifying whether events should or should not be included in the buffer
      */
-    public EventBuffer(EventUpcaster upcasterChain, Serializer serializer) {
+    public EventBuffer(EventStream delegate,
+                       EventUpcaster upcasterChain,
+                       Serializer serializer,
+                       boolean disableEventBlacklisting) {
+        this.delegate = delegate;
         this.serializer = serializer;
-        this.events = new LinkedBlockingQueue<>();
-        eventStream = EventUtils.upcastAndDeserializeTrackedEvents(StreamSupport.stream(new SimpleSpliterator<>(this::poll), false),
-                                                                   new GrpcMetaDataAwareSerializer(serializer),
-                                                                   getOrDefault(upcasterChain, NoOpEventUpcaster.INSTANCE)
-        )
-                                .iterator();
+        this.disableEventBlacklisting = disableEventBlacklisting;
+        this.eventStream = EventUtils.upcastAndDeserializeTrackedEvents(
+                StreamSupport.stream(new SimpleSpliterator<>(this::poll), false),
+                new GrpcMetaDataAwareSerializer(serializer),
+                getOrDefault(upcasterChain, NoOpEventUpcaster.INSTANCE)
+        ).iterator();
+
+        delegate.onAvailable(() -> {
+            lock.lock();
+            try {
+                dataAvailable.signalAll();
+            } finally {
+                lock.unlock();
+            }
+        });
     }
 
     private TrackedEventData<byte[]> poll() {
-        TrackedEventData<byte[]> nextItem;
-        if (peekData != null) {
-            nextItem = peekData;
-            peekData = null;
-            return nextItem;
-        }
-        nextItem = events.poll();
-        if (nextItem != null) {
-            consumeListener.accept(1);
-        }
-        return nextItem;
+        EventWithToken eventWithToken = delegate.nextIfAvailable();
+        return eventWithToken == null ? null : convert(eventWithToken);
     }
 
-    private void waitForData(long deadline) throws InterruptedException {
-        long now = System.currentTimeMillis();
-        if (peekData == null && now < deadline) {
-            peekData = events.poll(deadline - now, TimeUnit.MILLISECONDS);
-            if (peekData != null) {
-                consumeListener.accept(1);
-            }
-        }
+    private TrackedEventData<byte[]> convert(EventWithToken eventWithToken) {
+        TrackingToken trackingToken = new GlobalSequenceTrackingToken(eventWithToken.getToken());
+        return new TrackedDomainEventData<>(trackingToken, new GrpcBackedDomainEventData(eventWithToken.getEvent()));
     }
 
     /**
-     * {@inheritDoc}
-     *
-     * ----
-     *
-     * This implementation blacklists based on the payload type of the given message.
+     * {@inheritDoc} ----
+     * <p>
+     * This implementation removes events from the stream based on the payload type of the given message.
      */
     @Override
     public void blacklist(TrackedEventMessage<?> trackedEventMessage) {
-        Consumer<SerializedType> bl = blacklistListener;
-        if (bl == null) {
-            return;
+        if (!disableEventBlacklisting) {
+            SerializedType serializedType;
+            if (UnknownSerializedType.class.equals(trackedEventMessage.getPayloadType())) {
+                UnknownSerializedType unknownSerializedType = (UnknownSerializedType) trackedEventMessage.getPayload();
+                serializedType = unknownSerializedType.serializedType();
+                delegate.excludePayloadType(serializedType.getName(), serializedType.getRevision());
+            } else {
+                serializedType = serializer.typeForClass(trackedEventMessage.getPayloadType());
+            }
+            delegate.excludePayloadType(serializedType.getName(), serializedType.getRevision());
         }
-        if (UnknownSerializedType.class.equals(trackedEventMessage.getPayloadType())) {
-            UnknownSerializedType unknownSerializedType = (UnknownSerializedType) trackedEventMessage.getPayload();
-            bl.accept(unknownSerializedType.serializedType());
-        } else {
-            bl.accept(serializer.typeForClass(trackedEventMessage.getPayloadType()));
-        }
-    }
-
-    /**
-     * Registers the callback to invoke when the reader wishes to close the stream.
-     *
-     * @param closeCallback The callback to invoke when the reader wishes to close the stream
-     */
-    public void registerCloseListener(Consumer<EventBuffer> closeCallback) {
-        this.closeCallback = closeCallback;
-    }
-
-    /**
-     * Registers the callback to invoke when a raw input message was consumed from the buffer. Note that there can only
-     * be one listener registered.
-     *
-     * @param consumeListener the callback to invoke when a raw input message was consumed from the buffer
-     */
-    public void registerConsumeListener(Consumer<Integer> consumeListener) {
-        this.consumeListener = consumeListener;
-    }
-
-    /**
-     * Registers the callback to invoke when a the event processor determines that a type should be blacklisted.
-     * Note that there can only be one listener registered.
-     *
-     * @param blacklistListener the callback to invoke when a payload type is to be blacklisted.
-     */
-    public void registerBlacklistListener(Consumer<SerializedType> blacklistListener) {
-        this.blacklistListener = blacklistListener;
     }
 
     @Override
     public Optional<TrackedEventMessage<?>> peek() {
-        if (peekEvent == null && eventStream.hasNext()) {
-            peekEvent = eventStream.next();
-        }
-        return Optional.ofNullable(peekEvent);
+        return Optional.ofNullable(peekNullable());
     }
 
     @Override
-    public boolean hasNextAvailable(int timeout, TimeUnit timeUnit) throws InterruptedException {
+    public boolean hasNextAvailable(int timeout, TimeUnit timeUnit) {
         long deadline = System.currentTimeMillis() + timeUnit.toMillis(timeout);
         try {
-            while (peekEvent == null && !eventStream.hasNext() && System.currentTimeMillis() < deadline) {
-                if (exception != null) {
-                    RuntimeException runtimeException = exception;
-                    this.exception = null;
-                    throw runtimeException;
+            while (peekNullable() == null && System.currentTimeMillis() < deadline) {
+                lock.lock();
+                try {
+                    long waitTime = deadline - System.currentTimeMillis();
+                    // Check if an event has arrived in the meantime and if wait time greater than zero.
+                    // Only then is it worth waiting.
+                    if (peekNullable() == null && waitTime > 0) {
+                        boolean await =
+                                dataAvailable.await(Math.min(waitTime, MAX_AWAIT_AVAILABLE_DATA),
+                                                    TimeUnit.MILLISECONDS);
+                        logger.trace(await ? "Signaled new events are available"
+                                             : "No signal received for new events, exiting await");
+                    }
+                } finally {
+                    lock.unlock();
                 }
-                waitForData(deadline);
             }
-            return peekEvent != null || eventStream.hasNext();
+
+            return peekNullable() != null;
         } catch (InterruptedException e) {
-            logger.warn("Consumer thread was interrupted. Returning thread to event processor.", e);
+            logger.warn("Event consumer thread was interrupted. Returning thread to event processor.", e);
             Thread.currentThread().interrupt();
             return false;
         }
+    }
+
+    private TrackedEventMessage<?> peekNullable() {
+        if (peekEvent == null && eventStream.hasNext()) {
+            peekEvent = eventStream.next();
+        }
+        // If the peeked event still is null, the EventStream might've been closed.
+        if (peekEvent == null && delegate.isClosed()) {
+            throw new AxonServerException(ErrorCode.OTHER.errorCode(),
+                                          "The Event Stream has been closed, so no further events can be retrieved");
+        }
+        return peekEvent;
     }
 
     @Override
@@ -188,10 +188,6 @@ public class EventBuffer implements TrackingEventStream {
         try {
             hasNextAvailable(Integer.MAX_VALUE, TimeUnit.MILLISECONDS);
             return peekEvent == null ? eventStream.next() : peekEvent;
-        } catch (InterruptedException e) {
-            logger.warn("Consumer thread was interrupted. Returning thread to event processor.", e);
-            Thread.currentThread().interrupt();
-            return null;
         } finally {
             peekEvent = null;
         }
@@ -199,29 +195,7 @@ public class EventBuffer implements TrackingEventStream {
 
     @Override
     public void close() {
-        closed = true;
-        if (closeCallback != null) closeCallback.accept(this);
-        events.clear();
-    }
-
-    public boolean push(EventWithToken event) {
-        if( closed) {
-            logger.debug("Received event while closed: {}", event.getToken());
-            return false;
-        }
-        try {
-            TrackingToken trackingToken = new GlobalSequenceTrackingToken(event.getToken());
-            events.put(new TrackedDomainEventData<>(trackingToken, new GrpcBackedDomainEventData(event.getEvent())));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            closeCallback.accept(this);
-            return false;
-        }
-        return true;
-    }
-
-    public void fail(RuntimeException e) {
-        this.exception = e;
+        delegate.close();
     }
 
     private static class SimpleSpliterator<T> implements Spliterator<T> {

@@ -18,15 +18,18 @@ package org.axonframework.springboot.autoconfig;
 
 import org.axonframework.axonserver.connector.TargetContextResolver;
 import org.axonframework.axonserver.connector.command.AxonServerCommandBus;
+import org.axonframework.axonserver.connector.event.axon.AxonServerEventScheduler;
 import org.axonframework.axonserver.connector.query.AxonServerQueryBus;
 import org.axonframework.commandhandling.CommandBus;
 import org.axonframework.commandhandling.SimpleCommandBus;
 import org.axonframework.disruptor.commandhandling.DisruptorCommandBus;
+import org.axonframework.eventhandling.EventBus;
+import org.axonframework.eventhandling.scheduling.EventScheduler;
 import org.axonframework.messaging.Message;
 import org.axonframework.queryhandling.QueryBus;
 import org.axonframework.queryhandling.QueryUpdateEmitter;
-import org.junit.*;
-import org.junit.runner.*;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -36,16 +39,16 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.EnableMBeanExport;
 import org.springframework.jmx.support.RegistrationPolicy;
 import org.springframework.test.context.ContextConfiguration;
-import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
+@ExtendWith(SpringExtension.class)
 @ContextConfiguration
 @EnableAutoConfiguration
-@RunWith(SpringRunner.class)
 @EnableMBeanExport(registration = RegistrationPolicy.IGNORE_EXISTING)
-public class AxonServerAutoConfigurationTest {
+class AxonServerAutoConfigurationTest {
 
     private static final TargetContextResolver<Message<?>> CUSTOM_TARGET_CONTEXT_RESOLVER =
             m -> "some-custom-context-resolution";
@@ -76,19 +79,19 @@ public class AxonServerAutoConfigurationTest {
     private QueryUpdateEmitter updateEmitter;
 
     @Test
-    public void testAxonServerQueryBusConfiguration() {
+    void testAxonServerQueryBusConfiguration() {
         assertTrue(queryBus instanceof AxonServerQueryBus);
         assertSame(updateEmitter, queryBus.queryUpdateEmitter());
     }
 
     @Test
-    public void testAxonServerCommandBusBeanTypesConfiguration() {
+    void testAxonServerCommandBusBeanTypesConfiguration() {
         assertTrue(commandBus instanceof AxonServerCommandBus);
         assertTrue(localSegment instanceof SimpleCommandBus);
     }
 
     @Test
-    public void testAxonServerDefaultCommandBusConfiguration() {
+    void testAxonServerDefaultCommandBusConfiguration() {
         this.contextRunner.withConfiguration(AutoConfigurations.of(AxonServerAutoConfiguration.class))
                           .run(context -> {
                               assertThat(context).getBeanNames(CommandBus.class)
@@ -101,7 +104,21 @@ public class AxonServerAutoConfigurationTest {
     }
 
     @Test
-    public void testAxonServerUserDefinedCommandBusConfiguration() {
+    void testAxonServerDefaultConfiguration_AxonServerDisabled() {
+        this.contextRunner.withPropertyValues("axon.axonserver.enabled=false")
+                          .withConfiguration(AutoConfigurations.of(AxonServerAutoConfiguration.class))
+                          .run(context -> {
+                              assertThat(context).getBeanNames(CommandBus.class)
+                                                 .hasSize(1);
+                              assertThat(context).doesNotHaveBean("axonServerCommandBus");
+                              assertThat(context).getBean("commandBus")
+                                                 .isExactlyInstanceOf(SimpleCommandBus.class);
+                              assertThat(context).hasSingleBean(EventBus.class);
+                          });
+    }
+
+    @Test
+    void testAxonServerUserDefinedCommandBusConfiguration() {
         this.contextRunner.withConfiguration(AutoConfigurations.of(AxonServerAutoConfiguration.class))
                           .withUserConfiguration(ExplicitUserCommandBusConfiguration.class)
                           .run(context -> {
@@ -113,7 +130,7 @@ public class AxonServerAutoConfigurationTest {
     }
 
     @Test
-    public void testAxonServerUserDefinedLocalSegmentConfiguration() {
+    void testAxonServerUserDefinedLocalSegmentConfiguration() {
         this.contextRunner.withConfiguration(AutoConfigurations.of(AxonServerAutoConfiguration.class))
                           .withUserConfiguration(ExplicitUserLocalSegmentConfiguration.class)
                           .run(context -> {
@@ -127,7 +144,7 @@ public class AxonServerAutoConfigurationTest {
     }
 
     @Test
-    public void testAxonServerWrongUserDefinedLocalSegmentConfiguration() {
+    void testAxonServerWrongUserDefinedLocalSegmentConfiguration() {
         this.contextRunner.withConfiguration(AutoConfigurations.of(AxonServerAutoConfiguration.class))
                           .withUserConfiguration(ExplicitWrongUserLocalSegmentConfiguration.class)
                           .run(context -> {
@@ -139,7 +156,7 @@ public class AxonServerAutoConfigurationTest {
     }
 
     @Test
-    public void testNonAxonServerCommandBusConfiguration() {
+    void testNonAxonServerCommandBusConfiguration() {
         this.contextRunner.run(context -> {
             assertThat(context).getBeanNames(CommandBus.class)
                                .hasSize(1);
@@ -149,7 +166,7 @@ public class AxonServerAutoConfigurationTest {
     }
 
     @Test
-    public void testDefaultTargetContextResolverIsNoOp() {
+    void testDefaultTargetContextResolverIsNoOp() {
         this.contextRunner.withConfiguration(AutoConfigurations.of(AxonServerAutoConfiguration.class))
                           .run(context -> {
                               assertThat(context).getBeanNames(TargetContextResolver.class)
@@ -160,7 +177,7 @@ public class AxonServerAutoConfigurationTest {
     }
 
     @Test
-    public void testCustomTargetContextResolverIsConfigured() {
+    void testCustomTargetContextResolverIsConfigured() {
         this.contextRunner.withConfiguration(AutoConfigurations.of(AxonServerAutoConfiguration.class))
                           .withUserConfiguration(TargetContextResolverConfiguration.class)
                           .run(context -> {
@@ -168,6 +185,17 @@ public class AxonServerAutoConfigurationTest {
                                                  .hasSize(1);
                               assertThat(context).getBean(TargetContextResolver.class)
                                                  .isEqualTo(CUSTOM_TARGET_CONTEXT_RESOLVER);
+                          });
+    }
+
+    @Test
+    void testAxonServerEventSchedulerIsConfigured() {
+        this.contextRunner.withConfiguration(AutoConfigurations.of(AxonServerAutoConfiguration.class))
+                          .run(context -> {
+                              assertThat(context).getBeanNames(EventScheduler.class)
+                                                 .hasSize(1);
+                              assertThat(context).getBean(EventScheduler.class)
+                                                 .isExactlyInstanceOf(AxonServerEventScheduler.class);
                           });
     }
 

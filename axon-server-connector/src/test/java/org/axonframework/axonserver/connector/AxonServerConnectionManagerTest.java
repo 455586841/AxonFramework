@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2010-2019. Axon Framework
+ * Copyright (c) 2010-2020. Axon Framework
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,10 +16,16 @@
 
 package org.axonframework.axonserver.connector;
 
+import io.axoniq.axonserver.connector.AxonServerConnection;
 import io.axoniq.axonserver.grpc.control.ClientIdentification;
+import io.axoniq.axonserver.grpc.control.PlatformInfo;
+import io.grpc.stub.StreamObserver;
 import org.axonframework.axonserver.connector.event.StubServer;
+import org.axonframework.axonserver.connector.util.TcpUtil;
 import org.axonframework.config.TagsConfiguration;
-import org.junit.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -28,41 +34,47 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.axonframework.axonserver.connector.utils.AssertUtils.assertWithin;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Unit tests for {@link AxonServerConnectionManager}.
  *
  * @author Milan Savic
  */
-public class AxonServerConnectionManagerTest {
+class AxonServerConnectionManagerTest {
 
-    private StubServer stubServer = new StubServer(8124, 9657);
-    private StubServer secondNode = new StubServer(9657, 9657);
+    private StubServer stubServer;
+    private StubServer secondNode;
 
-    @Before
-    public void setUp() throws IOException {
+    @BeforeEach
+    void setUp() throws IOException {
+        int port1 = TcpUtil.findFreePort();
+        int port2 = TcpUtil.findFreePort();
+        stubServer = new StubServer(port1, port2);
+        secondNode = new StubServer(port2, port2);
         stubServer.start();
         secondNode.start();
     }
 
-    @After
-    public void tearDown() throws InterruptedException {
+    @AfterEach
+    void tearDown() throws InterruptedException {
         stubServer.shutdown();
         secondNode.shutdown();
     }
 
     @Test
-    public void checkWhetherConnectionPreferenceIsSent() {
+    void checkWhetherConnectionPreferenceIsSent() {
         TagsConfiguration tags = new TagsConfiguration(Collections.singletonMap("key", "value"));
-        AxonServerConfiguration configuration = AxonServerConfiguration.builder().build();
+        AxonServerConfiguration configuration = AxonServerConfiguration.builder().servers("localhost:" + stubServer.getPort()).build();
         AxonServerConnectionManager axonServerConnectionManager =
                 AxonServerConnectionManager.builder()
                                            .axonServerConfiguration(configuration)
                                            .tagsConfiguration(tags)
                                            .build();
 
-        assertNotNull(axonServerConnectionManager.getChannel());
+        assertNotNull(axonServerConnectionManager.getConnection("default"));
 
         List<ClientIdentification> clientIdentificationRequests = stubServer.getPlatformService()
                                                                             .getClientIdentificationRequests();
@@ -81,5 +93,34 @@ public class AxonServerConnectionManagerTest {
         assertNotNull(connectionExpectedTags);
         assertEquals(1, connectionExpectedTags.size());
         assertEquals("value", connectionExpectedTags.get("key"));
+    }
+
+    @Test
+    void testConnectionTimeout() throws IOException, InterruptedException {
+        String version = "4.2.1";
+        stubServer.shutdown();
+        stubServer = new StubServer(TcpUtil.findFreePort(), new PlatformService(TcpUtil.findFreePort()){
+            @Override
+            public void getPlatformServer(ClientIdentification request, StreamObserver<PlatformInfo> responseObserver) {
+                // ignore calls
+            }
+        });
+        stubServer.start();
+        AxonServerConfiguration configuration = AxonServerConfiguration.builder()
+                .servers("localhost:" + stubServer.getPort()).connectTimeout(50)
+                .build();
+        AxonServerConnectionManager axonServerConnectionManager =
+                AxonServerConnectionManager.builder()
+                        .axonServerConfiguration(configuration)
+                        .axonFrameworkVersionResolver(() -> version)
+                        .build();
+        try {
+            AxonServerConnection connection = axonServerConnectionManager.getConnection();
+            connection.commandChannel();
+            assertWithin(2, TimeUnit.SECONDS,
+                         () -> assertTrue(connection.isConnectionFailed(), "Was not expecting to get a connection"));
+        } catch (AxonServerException e) {
+            assertTrue(e.getMessage().contains("connection"));
+        }
     }
 }

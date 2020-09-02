@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2010-2019. Axon Framework
+ * Copyright (c) 2010-2020. Axon Framework
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,12 +27,22 @@ import org.axonframework.messaging.annotation.MessageHandlingMember;
 import org.axonframework.modelling.command.AggregateIdentifier;
 import org.axonframework.modelling.command.AggregateMember;
 import org.axonframework.modelling.command.AggregateRoot;
-import org.junit.Test;
+import org.axonframework.modelling.command.AggregateVersion;
+import org.junit.jupiter.api.*;
 
-import javax.persistence.Id;
-import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.math.BigDecimal;
-import java.util.*;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Spliterator;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ForkJoinPool;
@@ -40,18 +50,23 @@ import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import javax.persistence.Id;
 
 import static org.axonframework.commandhandling.GenericCommandMessage.asCommandMessage;
 import static org.axonframework.eventhandling.GenericEventMessage.asEventMessage;
-import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.notNullValue;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class AnnotatedAggregateMetaModelFactoryTest {
+/**
+ * Test case to validate all operations performed by the {@link AnnotatedAggregateMetaModelFactory}.
+ *
+ * @author Allard Buijze
+ */
+class AnnotatedAggregateMetaModelFactoryTest {
 
     @Test
-    public void testDetectAllAnnotatedHandlers() throws Exception {
-        AggregateModel<SomeAnnotatedHandlers> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeAnnotatedHandlers.class);
+    void testDetectAllAnnotatedHandlers() throws Exception {
+        AggregateModel<SomeAnnotatedHandlers> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeAnnotatedHandlers.class);
 
         CommandMessage<?> message = asCommandMessage("ok");
         assertEquals(true, getHandler(inspector, message).handle(message, new SomeAnnotatedHandlers()));
@@ -59,8 +74,9 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     @Test
-    public void testDetectAllAnnotatedHandlersInHierarchy() throws Exception {
-        AggregateModel<SomeSubclass> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeSubclass.class);
+    void testDetectAllAnnotatedHandlersInHierarchy() throws Exception {
+        AggregateModel<SomeSubclass> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeSubclass.class);
 
         SomeSubclass target = new SomeSubclass();
         CommandMessage<?> message = asCommandMessage("sub");
@@ -69,22 +85,27 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     @Test
-    public void testDetectFactoryMethodHandler() {
-        AggregateModel<SomeAnnotatedFactoryMethodClass> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeAnnotatedFactoryMethodClass.class);
+    void testDetectFactoryMethodHandler() {
+        AggregateModel<SomeAnnotatedFactoryMethodClass> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeAnnotatedFactoryMethodClass.class);
+
         CommandMessage<?> message = asCommandMessage("string");
-        final MessageHandlingMember<? super SomeAnnotatedFactoryMethodClass> messageHandlingMember = getHandler(inspector, message);
-        final Optional<CommandMessageHandlingMember> unwrap = messageHandlingMember.unwrap(CommandMessageHandlingMember.class);
-        assertThat(unwrap, notNullValue());
-        assertThat(unwrap.isPresent(), is(true));
+        final MessageHandlingMember<? super SomeAnnotatedFactoryMethodClass> messageHandlingMember =
+                getHandler(inspector, message);
+        final Optional<CommandMessageHandlingMember> unwrap =
+                messageHandlingMember.unwrap(CommandMessageHandlingMember.class);
+        assertNotNull(unwrap);
+        assertTrue(unwrap.isPresent());
         final CommandMessageHandlingMember commandMessageHandlingMember = unwrap.get();
-        assertThat(commandMessageHandlingMember.isFactoryHandler(), is(true));
+        assertTrue(commandMessageHandlingMember.isFactoryHandler());
     }
 
 
     @Test
-    public void testEventIsPublishedThroughoutRecursiveHierarchy() {
+    void testEventIsPublishedThroughoutRecursiveHierarchy() {
         // Note that if the inspector does not support recursive entities this will throw an StackOverflowError.
-        AggregateModel<SomeRecursiveEntity> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeRecursiveEntity.class);
+        AggregateModel<SomeRecursiveEntity> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeRecursiveEntity.class);
 
         // Create a hierarchy that we will use in this test.
         // The resulting hierarchy will look as follows:
@@ -139,28 +160,30 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     @Test
-    public void testLinkedListIsModifiedDuringIterationInRecursiveHierarchy() {
+    void testLinkedListIsModifiedDuringIterationInRecursiveHierarchy() {
         testCollectionIsModifiedDuringIterationInRecursiveHierarchy(LinkedList::new);
     }
 
     @Test
-    public void testHashSetIsModifiedDuringIterationInRecursiveHierarchy() {
+    void testHashSetIsModifiedDuringIterationInRecursiveHierarchy() {
         testCollectionIsModifiedDuringIterationInRecursiveHierarchy(HashSet::new);
     }
 
     @Test
-    public void testCopyOnWriteArrayListIsModifiedDuringIterationInRecursiveHierarchy() {
+    void testCopyOnWriteArrayListIsModifiedDuringIterationInRecursiveHierarchy() {
         testCollectionIsModifiedDuringIterationInRecursiveHierarchy(CopyOnWriteArrayList::new);
     }
 
     @Test
-    public void testConcurrentLinkedQueueIsModifiedDuringIterationInRecursiveHierarchy() {
+    void testConcurrentLinkedQueueIsModifiedDuringIterationInRecursiveHierarchy() {
         testCollectionIsModifiedDuringIterationInRecursiveHierarchy(ConcurrentLinkedQueue::new);
     }
 
-    private void testCollectionIsModifiedDuringIterationInRecursiveHierarchy(Supplier<Collection<SomeRecursiveEntity>> supplier) {
+    private void testCollectionIsModifiedDuringIterationInRecursiveHierarchy(
+            Supplier<Collection<SomeRecursiveEntity>> supplier) {
         // Note that if the inspector does not support recursive entities this will throw an StackOverflowError.
-        AggregateModel<SomeRecursiveEntity> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeRecursiveEntity.class);
+        AggregateModel<SomeRecursiveEntity> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeRecursiveEntity.class);
 
         // Create a hierarchy that we will use in this test.
         // The resulting hierarchy will look as follows:
@@ -195,8 +218,9 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     @Test
-    public void testEventIsPublishedThroughoutHierarchy() {
-        AggregateModel<SomeSubclass> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeSubclass.class);
+    void testEventIsPublishedThroughoutHierarchy() {
+        AggregateModel<SomeSubclass> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeSubclass.class);
 
         AtomicLong payload = new AtomicLong();
 
@@ -206,8 +230,10 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     @Test
-    public void testExpectCommandToBeForwardedToEntity() throws Exception {
-        AggregateModel<SomeSubclass> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeSubclass.class);
+    void testExpectCommandToBeForwardedToEntity() throws Exception {
+        AggregateModel<SomeSubclass> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeSubclass.class);
+
         GenericCommandMessage<?> message = new GenericCommandMessage<>(BigDecimal.ONE);
         SomeSubclass target = new SomeSubclass();
         MessageHandlingMember<? super SomeSubclass> handler = getHandler(inspector, message);
@@ -215,9 +241,29 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     @Test
-    public void testFindIdentifier() {
-        AggregateModel<SomeAnnotatedHandlers> inspector = AnnotatedAggregateMetaModelFactory
-                .inspectAggregate(SomeAnnotatedHandlers.class);
+    void testMethodIdentifierWithMethodParameters() {
+        assertThrows(AggregateModellingException.class,
+                     () -> AnnotatedAggregateMetaModelFactory
+                             .inspectAggregate(SomeIllegalAnnotatedIdMethodClass.class));
+        assertThrows(AggregateModellingException.class,
+                     () -> AnnotatedAggregateMetaModelFactory
+                             .inspectAggregate(SomeIllegalAnnotatedPersistenceIdMethodClass.class));
+    }
+
+    @Test
+    void testAggregateIdentifierPriority() {
+        AggregateModel<SomeDifferentDoubleIdAnnotatedHandler> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeDifferentDoubleIdAnnotatedHandler.class);
+
+        assertEquals("SomeDifferentDoubleIdAnnotatedHandler", inspector.type());
+        assertEquals("id", inspector.getIdentifier(new SomeDifferentDoubleIdAnnotatedHandler()));
+        assertEquals("id", inspector.routingKey());
+    }
+
+    @Test
+    void testFindIdentifier() {
+        AggregateModel<SomeAnnotatedHandlers> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeAnnotatedHandlers.class);
 
         assertEquals("SomeAnnotatedHandlers", inspector.type());
         assertEquals("id", inspector.getIdentifier(new SomeAnnotatedHandlers()));
@@ -225,58 +271,169 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     @Test
-    public void testFindJavaxPersistenceIdentifier() {
-        AggregateModel<JavaxPersistenceAnnotatedHandlers> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(JavaxPersistenceAnnotatedHandlers.class);
+    void testFindGetterIdentifier() {
+        AggregateModel<SomeGetterIdAnnotatedHandlers> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeGetterIdAnnotatedHandlers.class);
+
+        assertEquals("SomeGetterIdAnnotatedHandlers", inspector.type());
+        assertEquals("id", inspector.getIdentifier(new SomeGetterIdAnnotatedHandlers()));
+        assertEquals("id", inspector.routingKey());
+    }
+
+    @Test
+    void testFindMethodIdentifier() {
+        AggregateModel<SomeMethodIdAnnotatedHandlers> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeMethodIdAnnotatedHandlers.class);
+
+        assertEquals("SomeMethodIdAnnotatedHandlers", inspector.type());
+        assertEquals("id", inspector.getIdentifier(new SomeMethodIdAnnotatedHandlers()));
+        assertEquals("calculatedId", inspector.routingKey());
+    }
+
+    @Test
+    void testFindJavaxPersistenceIdentifier() {
+        AggregateModel<JavaxPersistenceAnnotatedHandlers> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(JavaxPersistenceAnnotatedHandlers.class);
 
         assertEquals("id", inspector.getIdentifier(new JavaxPersistenceAnnotatedHandlers()));
         assertEquals("id", inspector.routingKey());
     }
 
     @Test
-    public void testFindIdentifierInSuperClass() {
-        AggregateModel<SomeSubclass> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeSubclass.class);
+    void testFindJavaxPersistenceGetterIdentifier() {
+        AggregateModel<JavaxPersistenceGetterAnnotatedHandlers> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(JavaxPersistenceGetterAnnotatedHandlers.class);
+
+        assertEquals("id", inspector.getIdentifier(new JavaxPersistenceGetterAnnotatedHandlers()));
+        assertEquals("id", inspector.routingKey());
+    }
+
+    @Test
+    void testFindJavaxPersistenceMethodIdentifier() {
+        AggregateModel<JavaxPersistenceMethodIdAnnotatedHandlers> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(JavaxPersistenceMethodIdAnnotatedHandlers.class);
+
+        assertEquals("id", inspector.getIdentifier(new JavaxPersistenceMethodIdAnnotatedHandlers()));
+        assertEquals("calculatedId", inspector.routingKey());
+    }
+
+    @Test
+    void testFindIdentifierInSuperClass() {
+        AggregateModel<SomeSubclass> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeSubclass.class);
 
         assertEquals("SomeOtherName", inspector.type());
         assertEquals("id", inspector.getIdentifier(new SomeSubclass()));
     }
 
     @Test
-    public void testEntityInitializationIsThreadSafe() {
-        for (int i = 0; i < 100; i++) {
+    void testFindGetterIdentifierInSuperClass() {
+        AggregateModel<SomeGetterIdSubclass> inspector =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeGetterIdSubclass.class);
 
-            AggregateModel<PolyMorphAggregate> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(PolyMorphAggregate.class);
+        assertEquals("SomeOtherGetterName", inspector.type());
+        assertEquals("id", inspector.getIdentifier(new SomeGetterIdSubclass()));
+    }
+
+    @Test
+    void testEntityInitializationIsThreadSafe() {
+        for (int i = 0; i < 100; i++) {
+            AggregateModel<PolyMorphAggregate> inspector =
+                    AnnotatedAggregateMetaModelFactory.inspectAggregate(PolyMorphAggregate.class);
 
             PolyMorphAggregate instance1 = new PolyMorphAggregate();
             PolyMorphAggregate instance2 = new PolyMorphAggregate();
 
             AtomicLong counter = new AtomicLong();
 
-            ForkJoinTask<?> task1 = ForkJoinPool.commonPool().submit(() -> inspector.publish(asEventMessage(counter), instance1));
-            ForkJoinTask<?> task2 = ForkJoinPool.commonPool().submit(() -> inspector.publish(asEventMessage(counter), instance2));
+            ForkJoinTask<?> task1 = ForkJoinPool.commonPool()
+                                                .submit(() -> inspector.publish(asEventMessage(counter), instance1));
+            ForkJoinTask<?> task2 = ForkJoinPool.commonPool()
+                                                .submit(() -> inspector.publish(asEventMessage(counter), instance2));
 
             task1.join();
             task2.join();
 
-            assertEquals("Concurrency issue dectected after " + i + " attempts.", 2, counter.get());
-
+            assertEquals(2, counter.get(), "Concurrency issue detected after " + i + " attempts.");
         }
     }
 
-    @Test(expected = AxonConfigurationException.class)
-    public void testIllegalFactoryMethodThrowsExceptionClass() {
-        AnnotatedAggregateMetaModelFactory.inspectAggregate(SomeIllegalAnnotatedFactoryMethodClass.class);
+    @Test
+    void testIllegalFactoryMethodThrowsExceptionClass() {
+        assertThrows(
+                AxonConfigurationException.class,
+                () -> AnnotatedAggregateMetaModelFactory
+                        .inspectAggregate(SomeIllegalAnnotatedFactoryMethodClass.class));
     }
 
-    @Test(expected = AxonConfigurationException.class)
-    public void typedAggregateIdentifier() {
-        AggregateModel<TypedIdentifierAggregate> inspector = AnnotatedAggregateMetaModelFactory.inspectAggregate(TypedIdentifierAggregate.class);
+    @Test
+    void typedAggregateIdentifier() {
+        assertThrows(
+                AxonConfigurationException.class,
+                () -> AnnotatedAggregateMetaModelFactory.inspectAggregate(TypedIdentifierAggregate.class)
+        );
+    }
 
-        assertNotNull(inspector.getIdentifier(new TypedIdentifierAggregate()));
+    @Test
+    void testGetterTypedAggregateIdentifier() {
+        assertThrows(
+                AxonConfigurationException.class,
+                () -> AnnotatedAggregateMetaModelFactory.inspectAggregate(GetterTypedIdentifierAggregate.class)
+        );
+    }
+
+    @Test
+    void testIllegalDoubleIdentifiers() {
+        assertThrows(AxonConfigurationException.class, () ->
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(IllegalDoubleIdFieldsAnnotatedAggregate.class)
+        );
+        assertThrows(AxonConfigurationException.class, () ->
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(IllegalDoubleIdMixedAnnotatedAggregate.class)
+        );
+        assertThrows(AxonConfigurationException.class, () ->
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(IllegalDoubleIdMethodsAnnotatedAggregate.class)
+        );
+    }
+
+    @Test
+    void testVoidMethodIdentifier() {
+        assertThrows(AxonConfigurationException.class, () ->
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(IllegalVoidIdMethodAnnotatedAggregate.class)
+        );
+    }
+
+    @Test
+    void testAggregateVersionAnnotatedField() {
+        AggregateModel<AggregateWithAggregateVersionField> testSubject =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(AggregateWithAggregateVersionField.class);
+
+        assertEquals(42, testSubject.getVersion(new AggregateWithAggregateVersionField()));
+    }
+
+    @Test
+    void testAggregateVersionAnnotatedMethod() {
+        AggregateModel<AggregateWithAggregateVersionMethod> testSubject =
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(AggregateWithAggregateVersionMethod.class);
+
+        assertEquals(9001, testSubject.getVersion(new AggregateWithAggregateVersionMethod()));
+    }
+
+    @Test
+    void testIllegalDoubleAggregateVersions() {
+        assertThrows(AggregateModellingException.class, () ->
+                AnnotatedAggregateMetaModelFactory.inspectAggregate(IllegalAggregateWithSeveralAggregateVersions.class)
+        );
     }
 
     @SuppressWarnings("unchecked")
     private <T> MessageHandlingMember<T> getHandler(AggregateModel<?> members, CommandMessage<?> message) {
-        return (MessageHandlingMember<T>) members.commandHandlers().stream().filter(ch -> ch.canHandle(message)).findFirst().orElseThrow(() -> new AssertionError("Expected handler for this message"));
+        return (MessageHandlingMember<T>) members.commandHandlers()
+                                                 .stream()
+                                                 .filter(ch -> ch.canHandle(message))
+                                                 .findFirst()
+                                                 .orElseThrow(() -> new AssertionError(
+                                                         "Expected handler for this message"
+                                                 ));
     }
 
     @Documented
@@ -295,6 +452,22 @@ public class AnnotatedAggregateMetaModelFactoryTest {
 
     }
 
+    @SuppressWarnings("unused")
+    private static class SomeDifferentDoubleIdAnnotatedHandler {
+
+        @AggregateIdentifier
+        private String id = "id";
+        @Id
+        private String javaxPersistenceId = "javaxPersistenceId";
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+
+    @SuppressWarnings("unused")
     private static class JavaxPersistenceAnnotatedHandlers {
 
         @Id
@@ -311,6 +484,49 @@ public class AnnotatedAggregateMetaModelFactoryTest {
         }
     }
 
+    @SuppressWarnings("unused")
+    private static class JavaxPersistenceGetterAnnotatedHandlers {
+
+        private String id = "id";
+
+        @Id
+        public String getId() {
+            return id;
+        }
+
+        @CommandHandler(commandName = "java.lang.String")
+        public boolean handle(CharSequence test) {
+            return test.equals("ok");
+        }
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static class JavaxPersistenceMethodIdAnnotatedHandlers {
+
+        private String id = "id";
+
+        @Id
+        public String calculatedId() {
+            return id;
+        }
+
+        @CommandHandler(commandName = "java.lang.String")
+        public boolean handle(CharSequence test) {
+            return test.equals("ok");
+        }
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+    @SuppressWarnings("unused")
     private static class SomeAnnotatedHandlers {
 
         @AggregateIdentifier
@@ -327,6 +543,114 @@ public class AnnotatedAggregateMetaModelFactoryTest {
         }
     }
 
+    @SuppressWarnings("unused")
+    private static class SomeGetterIdAnnotatedHandlers {
+
+        private String id = "id";
+
+        @AggregateIdentifier
+        public String getId() {
+            return id;
+        }
+
+        @CommandHandler(commandName = "java.lang.String")
+        public boolean handle(CharSequence test) {
+            return test.equals("ok");
+        }
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static class SomeMethodIdAnnotatedHandlers {
+
+        private String id = "id";
+
+        @AggregateIdentifier
+        public String calculatedId() {
+            return id;
+        }
+
+        @CommandHandler(commandName = "java.lang.String")
+        public boolean handle(CharSequence test) {
+            return test.equals("ok");
+        }
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static class IllegalDoubleIdFieldsAnnotatedAggregate {
+
+        @AggregateIdentifier
+        private String id = "id";
+
+        @AggregateIdentifier
+        private String idTwo = "idTwo";
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static class IllegalDoubleIdMixedAnnotatedAggregate {
+
+        @AggregateIdentifier
+        private String id = "id";
+
+        @AggregateIdentifier
+        public String getIdTwo() {
+            return "idTwo";
+        }
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static class IllegalDoubleIdMethodsAnnotatedAggregate {
+
+        @AggregateIdentifier
+        public String getId() {
+            return "id";
+        }
+
+
+        @AggregateIdentifier
+        public String getIdTwo() {
+            return "idTwo";
+        }
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static class IllegalVoidIdMethodAnnotatedAggregate {
+
+        @AggregateIdentifier
+        public void getId() {
+        }
+
+        @CommandHandler
+        public boolean testInt(Integer test) {
+            return test > 0;
+        }
+    }
+
+    @SuppressWarnings("unused")
     @AggregateRoot(type = "SomeOtherName")
     private static class SomeSubclass extends SomeAnnotatedHandlers {
 
@@ -342,20 +666,39 @@ public class AnnotatedAggregateMetaModelFactoryTest {
         public void handle(AtomicLong value) {
             value.incrementAndGet();
         }
-
     }
 
+    @SuppressWarnings("unused")
+    @AggregateRoot(type = "SomeOtherGetterName")
+    private static class SomeGetterIdSubclass extends SomeGetterIdAnnotatedHandlers {
+
+        @AggregateMember
+        private SomeOtherEntity entity = new SomeOtherEntity();
+
+        @MyCustomCommandHandler
+        public boolean handleInSubclass(String test) {
+            return test.contains("sub");
+        }
+
+        @MyCustomEventHandler
+        public void handle(AtomicLong value) {
+            value.incrementAndGet();
+        }
+    }
+
+    @SuppressWarnings("unused")
     @AggregateRoot
     private static class PolyMorphAggregate {
 
         @AggregateMember
         private Object entity = new SomeOtherEntity();
-
     }
 
     private static class CustomIdentifier {
+
     }
 
+    @SuppressWarnings("unused")
     @AggregateRoot
     private static class TypedIdentifierAggregate {
 
@@ -371,7 +714,27 @@ public class AnnotatedAggregateMetaModelFactoryTest {
         public void handle(AtomicLong value) {
             value.incrementAndGet();
         }
+    }
 
+    @AggregateRoot
+    private static class GetterTypedIdentifierAggregate {
+
+        private CustomIdentifier aggregateIdentifier = new CustomIdentifier();
+
+        @AggregateIdentifier
+        public CustomIdentifier getAggregateIdentifier() {
+            return aggregateIdentifier;
+        }
+
+        @CommandHandler
+        public boolean handleInSubclass(String test) {
+            return test.contains("sub");
+        }
+
+        @EventHandler
+        public void handle(AtomicLong value) {
+            value.incrementAndGet();
+        }
     }
 
     private static class SomeOtherEntity {
@@ -388,6 +751,7 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     private static class CreateChild {
+
         private final String parentId;
         private final String childId;
 
@@ -398,6 +762,7 @@ public class AnnotatedAggregateMetaModelFactoryTest {
     }
 
     private static class MoveChildUp {
+
         private final String parentId;
         private final String childId;
 
@@ -416,7 +781,9 @@ public class AnnotatedAggregateMetaModelFactoryTest {
         @AggregateMember
         private final SomeIterable<SomeRecursiveEntity> children;
 
-        public SomeRecursiveEntity(Supplier<Collection<SomeRecursiveEntity>> supplier, SomeRecursiveEntity parent, String entityId) {
+        public SomeRecursiveEntity(Supplier<Collection<SomeRecursiveEntity>> supplier,
+                                   SomeRecursiveEntity parent,
+                                   String entityId) {
             this.supplier = supplier;
             this.parent = parent;
             this.entityId = entityId;
@@ -450,6 +817,7 @@ public class AnnotatedAggregateMetaModelFactoryTest {
         }
     }
 
+    @SuppressWarnings({"UnusedAssignment", "unused"})
     public static class SomeAnnotatedFactoryMethodClass {
 
         @AggregateIdentifier
@@ -469,6 +837,7 @@ public class AnnotatedAggregateMetaModelFactoryTest {
         }
     }
 
+    @SuppressWarnings({"UnusedAssignment", "unused"})
     public static class SomeIllegalAnnotatedFactoryMethodClass {
 
         @AggregateIdentifier
@@ -485,6 +854,44 @@ public class AnnotatedAggregateMetaModelFactoryTest {
 
         public String getId() {
             return id;
+        }
+    }
+
+    public static class SomeIllegalAnnotatedIdMethodClass {
+
+        private String id = "id";
+
+        @CommandHandler
+        SomeIllegalAnnotatedIdMethodClass(String id) {
+            this.id = id;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        @AggregateIdentifier
+        public String calculatedIdMethod(String seed) {
+            return seed + id;
+        }
+    }
+
+    public static class SomeIllegalAnnotatedPersistenceIdMethodClass {
+
+        private String id = "id";
+
+        @CommandHandler
+        SomeIllegalAnnotatedPersistenceIdMethodClass(String id) {
+            this.id = id;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        @Id
+        public String fancyCalculatedIdMethod(String seed) {
+            return seed + id;
         }
     }
 
@@ -527,6 +934,39 @@ public class AnnotatedAggregateMetaModelFactoryTest {
 
         public int size() {
             return contents.size();
+        }
+    }
+
+
+    private static class AggregateWithAggregateVersionField {
+
+        @AggregateIdentifier
+        private final String aggregateIdentifier = "aggregateIdentifier";
+        @AggregateVersion
+        private final long aggregateVersion = 42L;
+    }
+
+    private static class AggregateWithAggregateVersionMethod {
+
+        @AggregateIdentifier
+        private final String aggregateIdentifier = "aggregateIdentifier";
+
+        @AggregateVersion
+        public long getAggregateVersion() {
+            return 9001L;
+        }
+    }
+
+    private static class IllegalAggregateWithSeveralAggregateVersions {
+
+        @AggregateIdentifier
+        private String aggregateIdentifier;
+        @AggregateVersion
+        private long fieldAggregateVersion;
+
+        @AggregateVersion
+        public long getMethodAggregateVersion() {
+            return 1337;
         }
     }
 }

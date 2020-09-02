@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2018. Axon Framework
+ * Copyright (c) 2010-2020. Axon Framework
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import org.axonframework.eventhandling.GenericEventMessage;
 import org.axonframework.eventhandling.TrackedEventData;
 import org.axonframework.eventhandling.TrackedEventMessage;
 import org.axonframework.eventhandling.TrackingEventStream;
+import org.axonframework.eventhandling.TrackingToken;
 import org.axonframework.eventsourcing.eventstore.AbstractEventStorageEngine;
 import org.axonframework.eventsourcing.eventstore.BatchingEventStorageEngineTest;
 import org.axonframework.eventsourcing.eventstore.EmbeddedEventStore;
@@ -33,11 +34,14 @@ import org.axonframework.serialization.UnknownSerializedType;
 import org.axonframework.serialization.upcasting.event.EventUpcaster;
 import org.axonframework.serialization.upcasting.event.NoOpEventUpcaster;
 import org.hsqldb.jdbc.JDBCDataSource;
-import org.junit.*;
+import org.junit.jupiter.api.*;
 import org.springframework.test.annotation.DirtiesContext;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -51,7 +55,7 @@ import java.util.stream.Stream;
 
 import static java.util.stream.Collectors.toList;
 import static org.axonframework.eventsourcing.utils.EventStoreTestUtils.*;
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * @author Rene de Waele
@@ -62,7 +66,7 @@ public class JdbcEventStorageEngineTest extends BatchingEventStorageEngineTest {
     private PersistenceExceptionResolver defaultPersistenceExceptionResolver;
     private JdbcEventStorageEngine testSubject;
 
-    @Before
+    @BeforeEach
     public void setUp() throws SQLException {
         dataSource = new JDBCDataSource();
         dataSource.setUrl("jdbc:hsqldb:mem:test");
@@ -86,7 +90,6 @@ public class JdbcEventStorageEngineTest extends BatchingEventStorageEngineTest {
     }
 
     @Test
-    @SuppressWarnings({"JpaQlInspection", "OptionalGetWithoutIsPresent"})
     @DirtiesContext
     public void testCustomSchemaConfig() {
         setTestSubject(testSubject = createEngine(NoOpEventUpcaster.INSTANCE, defaultPersistenceExceptionResolver,
@@ -99,6 +102,18 @@ public class JdbcEventStorageEngineTest extends BatchingEventStorageEngineTest {
                                                           return "LONGVARCHAR";
                                                       }
                                                   }));
+        testStoreAndLoadEvents();
+    }
+
+    @Test
+    @DirtiesContext
+    public void testCustomSchemaConfigTimestampColumn() {
+        setTestSubject(testSubject = createTimestampEngine(new HsqlEventTableFactory() {
+            @Override
+            protected String timestampType() {
+                return "timestamp";
+            }
+        }));
         testStoreAndLoadEvents();
     }
 
@@ -123,7 +138,7 @@ public class JdbcEventStorageEngineTest extends BatchingEventStorageEngineTest {
             conn.prepareStatement("DELETE FROM DomainEventEntry WHERE sequenceNumber < 0").executeUpdate();
         }
 
-        testSubject.fetchTrackedEvents(null, 100).stream()
+        testSubject.fetchTrackedEvents((TrackingToken) null, 100).stream()
                    .map(i -> (GapAwareTrackingToken) i.trackingToken())
                    .forEach(i -> assertTrue(i.getGaps().size() <= 2));
     }
@@ -453,11 +468,37 @@ public class JdbcEventStorageEngineTest extends BatchingEventStorageEngineTest {
                                                               .dataType(dataType)
                                                               .build();
 
+        return doCreateTables(tableFactory, result);
+    }
+
+    private JdbcEventStorageEngine createTimestampEngine(EventTableFactory eventTableFactory) {
+        JdbcEventStorageEngine.Builder builder = JdbcEventStorageEngine.builder()
+                                                                       .connectionProvider(dataSource::getConnection)
+                                                                       .transactionManager(NoTransactionManager.INSTANCE);
+
+        JdbcEventStorageEngine result = new JdbcEventStorageEngine(builder) {
+            @Override
+            protected Object readTimeStamp(ResultSet resultSet, String columnName) throws SQLException {
+                Timestamp ts = resultSet.getTimestamp(columnName);
+                return ts.toInstant();
+            }
+
+            @Override
+            protected void writeTimestamp(PreparedStatement preparedStatement, int position, Instant timestamp)
+                    throws SQLException {
+                preparedStatement.setTimestamp(position, new Timestamp(timestamp.toEpochMilli()));
+            }
+        };
+
+        return doCreateTables(eventTableFactory, result);
+    }
+
+    private JdbcEventStorageEngine doCreateTables(EventTableFactory eventTableFactory, JdbcEventStorageEngine result) {
         try {
             Connection connection = dataSource.getConnection();
             connection.prepareStatement("DROP TABLE IF EXISTS DomainEventEntry").executeUpdate();
             connection.prepareStatement("DROP TABLE IF EXISTS SnapshotEventEntry").executeUpdate();
-            result.createSchema(tableFactory);
+            result.createSchema(eventTableFactory);
             return result;
         } catch (SQLException e) {
             throw new IllegalStateException(e);
