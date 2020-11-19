@@ -21,11 +21,15 @@ import org.axonframework.eventhandling.TrackedEventMessage;
 import org.axonframework.eventsourcing.eventstore.EventStorageEngineTest;
 import org.junit.jupiter.api.*;
 
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
+ * Test class validating the {@link InMemoryEventStorageEngine}.
+ *
  * @author Rene de Waele
  */
 class InMemoryEventStorageEngineTest extends EventStorageEngineTest {
@@ -44,5 +48,18 @@ class InMemoryEventStorageEngineTest extends EventStorageEngineTest {
         testSubject.appendEvents(GenericEventMessage.asEventMessage("test"));
 
         assertTrue(stream.findFirst().isPresent());
+    }
+
+    @Test
+    void testPublishedEventsEmittedToExistingStreams_WithOffset() {
+        testSubject = new InMemoryEventStorageEngine(1);
+        Stream<? extends TrackedEventMessage<?>> stream = testSubject.readEvents(null, true);
+        testSubject.appendEvents(GenericEventMessage.asEventMessage("test"));
+
+        Optional<? extends TrackedEventMessage<?>> optionalResult = stream.findFirst();
+        assertTrue(optionalResult.isPresent());
+        OptionalLong optionalResultPosition = optionalResult.get().trackingToken().position();
+        assertTrue(optionalResultPosition.isPresent());
+        assertEquals(1, optionalResultPosition.getAsLong());
     }
 }
